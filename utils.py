@@ -1,11 +1,9 @@
 import os
-import matplotlib.pyplot as plt
 import pandas as pd
 from datetime import datetime, timedelta
 import csv
-import matplotlib.pyplot as plt
 import seaborn as sns
-
+import numpy as np
 
 def hex_to_int(hex_str):
     try:
@@ -28,7 +26,7 @@ def hex_to_time(hex_time):
         return None
 
 def extract_expected_throughput_in_order(file_path):
-    # Assuming filename format: "1724872312_lowest_mode_expected_throughput"
+    """Assuming filename format: "1724872312_lowest_mode_expected_throughput"""
     filename = os.path.basename(file_path)
     try:
         return filename.split('_')[0]
@@ -36,8 +34,16 @@ def extract_expected_throughput_in_order(file_path):
         print(f"Error extracting order from filename '{filename}': {e}")
         return None
 
-def extract_experiment_order(file_path):
+def extract_mode_from_filename(filename):
     # Assuming filename format: "1_ap_1-Lowest_Power_orca_trace.csv"
+    base_filename = os.path.basename(filename)
+    if '_orca_trace.csv' in base_filename:
+        base_filename = base_filename.replace('_orca_trace.csv', '')
+    parts = base_filename.split('_', 2)
+    return parts[-1].split('-',1)[1]
+
+def extract_experiment_order(file_path):
+    """Assuming filename format: "1_ap_1-Lowest_Power_orca_trace.csv"""
     filename = os.path.basename(file_path)
     try:
         parts = filename.split('-')[0]
@@ -48,6 +54,7 @@ def extract_experiment_order(file_path):
         return None
 
 def categorize_files(directory):
+    """Processing the different csv files obtained post experiment"""
     measured_throughput_file = None
     expected_throughput_files = []
     response_files = []
@@ -114,6 +121,8 @@ def read_csv_to_dict(file_path, delimiter):
     return filtered_data
 
 def process_expected_throughput_files(expected_throughput_files):
+    """This function was used to process expected throughput file computed within the power controller.
+    The obtained data was averaged per minute. However we have removed the usage of this function for now"""
     expected_throughput_files.sort(key=lambda x: extract_expected_throughput_in_order(x))
     combined_expected_throughput_data = []
     cumulative_time = 0
@@ -152,42 +161,30 @@ def process_measured_throughput_file(file_path):
     return measured_throughput_data
 
 def process_trace_response_files(trace_response_files):
+    """This function processes the response csv files of different parts from the experiment.
+    The timing of different parts(csv files) is combined so that they appear to be linear
+    """
     trace_response_files.sort(key=lambda x: extract_experiment_order(x))
-
     trace_data = []
     current_time_offset = 0
-    duration_labels = []
     cumulative_time = 0
 
     for file_path in trace_response_files:
         print(f"Processing response file: {file_path}")
-
-        mode = os.path.basename(file_path).split('-')[1]
-
+        mode = extract_mode_from_filename(file_path)
         data = read_csv_to_dict(file_path, delimiter=';')
-
         if not data:
             continue
-
         start_time = cumulative_time
         end_time = cumulative_time + data[-1]['time']
         cumulative_time = end_time
-
-        duration_label = f"{mode} : {int(start_time)}s - {int(end_time)}s"
-        duration_labels.append(duration_label)
-
         for entry in data:
             entry['time'] += current_time_offset
             entry['mode'] = mode
             trace_data.append(entry)
 
         current_time_offset = trace_data[-1]['time'] + 1
-    return trace_data,duration_labels
-
-def adjust_time_offsets(data, current_time_offset):
-    for entry in data:
-        entry['time'] += current_time_offset
-    return data
+    return trace_data
 
 def get_boxplot_properties():
     boxprops = dict(facecolor='none', edgecolor='black')
@@ -197,46 +194,144 @@ def get_boxplot_properties():
 
     return boxprops, medianprops, whiskerprops, capprops
 
-def plot_rate_vs_time(df, ax):
+def bin_time(df, time_column='time', bin_size=10):
+    min_time = df[time_column].min()
+    max_time = df[time_column].max()
+
+    bin_edges = np.arange(min_time, max_time + bin_size, bin_size)
+    rounded_bin_edges = np.round(bin_edges / bin_size) * bin_size
+
+    if rounded_bin_edges[-1] < max_time:
+        rounded_bin_edges = np.append(rounded_bin_edges, np.ceil(max_time / bin_size) * bin_size)
+    rounded_bin_edges = rounded_bin_edges[rounded_bin_edges <= max_time]
+
+    df['binned_time'] = pd.cut(df[time_column], bins=rounded_bin_edges)
+    return df
+
+def get_bin_edges(min_time, max_time, bin_size):
+    return np.arange(min_time, max_time + bin_size, bin_size)
+
+def add_grid_lines_for_scatter_plot(ax, df):
+    df_sorted = df.sort_values(by='time', ascending=True)
+    prev_mode = None
+    prev_time = None
+    line_positions = []
+
+    for idx, row in df_sorted.iterrows():
+        current_mode = row['mode']
+        current_time = row['time']
+
+        if current_mode != prev_mode:
+            if prev_mode is not None and prev_time is not None:
+                line_positions.append(prev_time)
+            prev_mode = current_mode
+        prev_time = current_time
+
+    first_time = df_sorted['time'].iloc[0]
+    last_time = df_sorted['time'].iloc[-1]
+
+    line_positions.insert(0, first_time)
+    line_positions.append(last_time)
+    for pos in sorted(set(line_positions)):
+        ax.axvline(x=pos, color='black', linestyle='--', linewidth=1)
+
+    return sorted(set(line_positions))
+
+def scale_line_positions(line_positions, rate_x_range, power_x_range):
+    scaling_factor = power_x_range / rate_x_range
+    print('ranges',rate_x_range, power_x_range )
+    return [pos * scaling_factor for pos in line_positions]
+
+def plot_rate_vs_time(df, ax,):
     df['rate_int'] = df['rate'].apply(hex_to_int)
     df_sorted = df.sort_values(by='rate_int', ascending=True)
-    df_sorted = df_sorted.drop(columns='rate_int')
-
     num_modes = len(df_sorted['mode'].unique())
     color_palette = sns.color_palette('tab10', num_modes)
-
     sns.scatterplot(data=df_sorted, x='time', y='rate', hue='mode', palette=color_palette, alpha=0.7, ax=ax)
+    line_positions = add_grid_lines_for_scatter_plot(ax, df)
+    rounded_positions = [round(pos) for pos in line_positions]
+
+    ax.set_xticks(rounded_positions)
+    print("Rate Plot Line Positions:", rounded_positions)
+    ax.set_xticklabels([f'{int(pos)}' for pos in rounded_positions])
+    ax.legend(loc='lower left')
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Rate')
     ax.set_title('Rate vs Time')
-    ax.set_xlim(left=0)
-    ax.grid(True)
+    ax.set_xlim(df['time'].min(), df['time'].max())
+    ax.invert_yaxis()
 
-def plot_power_vs_time(df, ax):
+    return rounded_positions, ax.get_xlim()
+
+def plot_power_vs_time(df, ax, bin_edges, rate_line_positions, rate_x_limit):
+    df = bin_time(df, time_column='time', bin_size=10)
     boxprops, medianprops, whiskerprops, capprops = get_boxplot_properties()
-    df['binned_time'] = pd.cut(df['time'], bins=10)
-    sns.boxplot(data=df, x='binned_time', y='power', ax=ax, boxprops=boxprops, medianprops=medianprops, whiskerprops =whiskerprops, capprops = capprops )
     bins = df['binned_time'].cat.categories
-    xticks = range(len(bins))
+    for i in range(len(bin_edges) - 1):
+        bin_data = df[(df['time'] >= bin_edges[i]) & (df['time'] < bin_edges[i + 1])]
 
-    ax.set_xticks(xticks)
-    ax.set_xticklabels([f'{int(interval.left)} - {int(interval.right)}' for interval in df['binned_time'].cat.categories])
+        if not bin_data.empty:
+            sns.boxplot(
+                data=bin_data,
+                x=[i] * len(bin_data),
+                y='power',
+                ax=ax,
+                boxprops=boxprops,
+                medianprops=medianprops,
+                whiskerprops=whiskerprops,
+                capprops=capprops
+            )
+            mean_value = bin_data['power'].mean()
+            ax.text(i, mean_value, f'{mean_value:.2f}',
+                    horizontalalignment='center',
+                    verticalalignment='center',
+                    color='red',
+                    fontsize=8)
+
+        if rate_line_positions is not None:
+            scaled_positions = scale_line_positions(rate_line_positions, rate_x_limit[1], len(bins))
+            for pos in scaled_positions:
+                ax.axvline(x=pos, color='black', linestyle='--', linewidth=1)
+
+    print("Power Plot Line Positions:", scaled_positions, bins)
+    ax.tick_params(axis='x', which='both', bottom=False, top=False)
+    ax.set_xticklabels([])
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Power Index')
     ax.set_title('Power vs Time (Box Plot)')
-    ax.grid(True)
+    ax.set_xlim(0, len(bins))
+    return scaled_positions, bins
 
-
-def plot_throughput_vs_time(measured_throughput_file, ax, ylabel):
+def plot_throughput_vs_time(df, ax, bin_edges, line_positions, power_bins):
+    df = bin_time(df, time_column='time', bin_size=10)
     boxprops, medianprops, whiskerprops, capprops = get_boxplot_properties()
-
-    measured_throughput_file['binned_time']= pd.cut(measured_throughput_file['time'], bins=10)
-    sns.boxplot(data=measured_throughput_file, x='binned_time', y='throughput', ax=ax, boxprops=boxprops, medianprops=medianprops, whiskerprops =whiskerprops, capprops = capprops)
+    for i in range(len(bin_edges) - 1):
+        bin_start = bin_edges[i]
+        bin_end = bin_edges[i + 1]
+        bin_data = df[(df['time'] >= bin_start) & (df['time'] < bin_end)]
+        if not bin_data.empty:
+            sns.boxplot(
+                data=bin_data,
+                x=[i] * len(bin_data),
+                y='throughput',
+                ax=ax,
+                boxprops=boxprops,
+                medianprops=medianprops,
+                whiskerprops=whiskerprops,
+                capprops=capprops
+            )
+            mean_value = bin_data['throughput'].mean()
+            ax.text(i, mean_value, f'{mean_value:.2f}',
+                    horizontalalignment='center',
+                    verticalalignment='center',
+                    color='red',
+                    fontsize=8)
+    for pos in line_positions:
+        ax.axvline(x=pos, color='black', linestyle='--', linewidth=1)
+    print("Throughput Plot Line Positions:", line_positions,power_bins)
+    ax.tick_params(axis='x', which='both', bottom=False, top=False)
+    ax.set_xticklabels([])
     ax.set_xlabel('Time (s)')
-    ax.set_ylabel(f'{ylabel} Throughput')
-    ax.set_title(f'{ylabel} Throughput vs Time')
-    bins = pd.cut(measured_throughput_file['time'], bins=10).cat.categories
-    ax.set_xticks(range(len(bins)))
-    ax.set_xticklabels([f'{int(interval.left)} - {int(interval.right)}' for interval in bins])
-    ax.grid(True)
-
+    ax.set_ylabel('Throughput')
+    ax.set_title('Throughput vs Time (Box Plot)')
+    ax.set_xlim(0, len(power_bins))
