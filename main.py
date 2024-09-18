@@ -4,7 +4,7 @@ import pandas as pd
 from matplotlib import gridspec
 from utils import *
 
-def plot_response_files(trace_response_data, measured_throughput_file):
+def plot_response_files(trace_response_data, measured_throughput_data):
     df = pd.DataFrame(trace_response_data)
     pd.set_option('display.max_rows', None)
     min_time = df['time'].min()
@@ -30,13 +30,10 @@ def plot_response_files(trace_response_data, measured_throughput_file):
     line_positions, power_bins = plot_power_vs_time(df, ax2, bin_edges, label_numbers, rate_x_limit)
 
     ax3 = fig.add_subplot(gs[2])
-    plot_throughput_vs_time(measured_throughput_file, ax3, bin_edges, line_positions, power_bins)
-    print("Rate Plot X-axis Limits:", ax1.get_xlim())
-    print("Power Plot X-axis Limits:", ax2.get_xlim())
-    print("Throughput Plot X-axis Limits:", ax3.get_xlim())
+    plot_throughput_vs_time(measured_throughput_data, ax3, bin_edges, line_positions, power_bins)
     fig.subplots_adjust(top=0.9, right=0.75)
     plt.tight_layout()
-    plt.savefig('bigdata2.png', bbox_inches='tight', pad_inches=0.1, dpi=600)
+    plt.savefig('new_design_large_data1.png', bbox_inches='tight', pad_inches=0.1, dpi=700)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process CSV files in a directory.")
