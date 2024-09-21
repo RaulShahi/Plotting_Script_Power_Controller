@@ -84,6 +84,7 @@ def categorize_files(directory):
     return expected_throughput_files,measured_throughput_file, response_files
 
 def read_csv_to_dict(file_path, delimiter):
+    """This function reads the trace response csv files obtained after the experiment"""
     filtered_data = []
     first_time = None
     try:
@@ -157,8 +158,15 @@ def process_measured_throughput_file(file_path):
 
     print(f"Processing throughput file: {file_path}")
     measured_throughput_data = pd.read_csv(file_path, sep='\s+', header=None, skiprows=1, names=['time', 'throughput'])
-    measured_throughput_data['file_name'] = os.path.basename(file_path)
     return measured_throughput_data
+
+def map_modes_to_throughput(trace_df, throughput_df):
+    trace_df['second'] = trace_df['time'].apply(lambda x: int(round(x)))
+    mode_per_second = trace_df.groupby('second')['mode'].agg(lambda x: x.mode().iloc[0] if not x.mode().empty else None)
+    throughput_df['second'] = throughput_df['time'].astype(int)
+    throughput_df['mode'] = throughput_df['second'].map(mode_per_second)
+
+    return throughput_df
 
 def process_trace_response_files(trace_response_files):
     """This function processes the response csv files of different parts from the experiment.
@@ -211,11 +219,12 @@ def bin_time(df, time_column='time', bin_size=10):
 def get_bin_edges(min_time, max_time, bin_size):
     return np.arange(min_time, max_time + bin_size, bin_size)
 
-def add_grid_lines_for_scatter_plot(ax, df):
+def add_grid_lines_to_separate_modes(ax, df):
     df_sorted = df.sort_values(by='time', ascending=True)
     prev_mode = None
     prev_time = None
     line_positions = []
+    modes_between_lines = []
     for idx, row in df_sorted.iterrows():
         current_mode = row['mode']
         current_time = row['time']
@@ -223,6 +232,7 @@ def add_grid_lines_for_scatter_plot(ax, df):
         if current_mode != prev_mode:
             if prev_mode is not None and prev_time is not None:
                 line_positions.append(prev_time)
+                modes_between_lines.append(prev_mode)
             prev_mode = current_mode
         prev_time = current_time
 
@@ -231,25 +241,29 @@ def add_grid_lines_for_scatter_plot(ax, df):
 
     line_positions.insert(0, first_time)
     line_positions.append(last_time)
+    modes_between_lines.append(df_sorted['mode'].iloc[-1])
 
+    rounded_positions = [round(pos) for pos in line_positions]
     for pos in sorted(set(line_positions)):
         ax.axvline(x=pos, color='black', linestyle='--', linewidth=1)
 
-    return sorted(set(line_positions))
+    return sorted(set(rounded_positions)), modes_between_lines
 
 def scale_line_positions(line_positions, rate_x_range, power_x_range):
     scaling_factor = power_x_range / rate_x_range
     return [pos * scaling_factor for pos in line_positions]
 
-def plot_rate_vs_time(df, ax,):
+def plot_rate_vs_time(kwargs):
+    df = kwargs['df']
+    ax = kwargs['ax']
+    rounded_positions = kwargs['rounded_position']
+    modes_between_lines = kwargs['modes_between_lines']
+
     df['rate_int'] = df['rate'].apply(hex_to_int)
     df_sorted = df.sort_values(by='rate_int', ascending=True)
     num_modes = len(df_sorted['mode'].unique())
     color_palette = sns.color_palette('tab10', num_modes)
     sns.scatterplot(data=df_sorted, x='time', y='rate', hue='mode', palette=color_palette, alpha=0.7, ax=ax)
-    line_positions = add_grid_lines_for_scatter_plot(ax, df)
-    rounded_positions = [round(pos) for pos in line_positions]
-
     ax.set_xticks(rounded_positions)
     ax.set_xticklabels([f'{int(pos)}' for pos in rounded_positions])
     ax.legend(loc='lower left')
@@ -259,7 +273,7 @@ def plot_rate_vs_time(df, ax,):
     ax.set_xlim(df['time'].min(), df['time'].max())
     ax.invert_yaxis()
 
-    return rounded_positions, ax.get_xlim()
+    return ax.get_xlim()
 
 def calculate_mean_between_different_parts(mean_values, scaled_positions):
     interval_means = []
@@ -282,7 +296,14 @@ def calculate_mean_between_different_parts(mean_values, scaled_positions):
             interval_means.append(interval_mean)
     return interval_means
 
-def plot_power_vs_time(df, ax, bin_edges, rate_line_positions, rate_x_limit):
+def plot_power_vs_time(kwargs):
+    df = kwargs['df']
+    ax = kwargs['ax']
+    bin_edges =kwargs['bin_edges']
+    rate_line_positions = kwargs['rounded_positions']
+    modes_between_lines = kwargs['modes_between_lines']
+    rate_x_limit = kwargs['rate_x_limit']
+
     df = bin_time(df, time_column='time', bin_size=10)
     boxprops, medianprops, whiskerprops, capprops = get_boxplot_properties()
     bins = df['binned_time'].cat.categories
@@ -308,27 +329,33 @@ def plot_power_vs_time(df, ax, bin_edges, rate_line_positions, rate_x_limit):
     scaled_positions = scale_line_positions(rate_line_positions, rate_x_limit[1], len(bins))
     interval_means = calculate_mean_between_different_parts(mean_values, scaled_positions)
 
-    for i, pos in enumerate(scaled_positions[:-1]):
-        ax.axvline(x=pos, color='black', linestyle='--', linewidth=1)
 
-        mid_position = (pos + scaled_positions[i + 1]) / 2
-        if i < len(interval_means):
-            ax.text(mid_position, ax.get_ylim()[1] * 0.9,
-                    f'Mean: {interval_means[i]:.2f}',
-                    horizontalalignment='center',
-                    verticalalignment='center',
-                    color='red',
-                    fontsize=8)
+    for i, pos in enumerate(scaled_positions[:-1]):
+        next_pos = scaled_positions[i + 1]
+        mode = modes_between_lines[i]
+        ax.axvline(x=pos, color='black', linestyle='--', linewidth=1)
+        if mode != 'fixed-rate':
+            ax.hlines(y=interval_means[i], xmin=pos, xmax=next_pos, color='blue', linestyle='-', linewidth=1.5)
+            ax.text((pos + next_pos) / 2, interval_means[i], f'Mean: {interval_means[i]:.2f}',
+                        horizontalalignment='center', verticalalignment='bottom', color='blue', fontsize=16)
+    ax.axvline(x=scaled_positions[-1], color='black', linestyle='--', linewidth=1)
 
     ax.tick_params(axis='x', which='both', bottom=False, top=False)
     ax.set_xticklabels([])
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Power Index')
-    ax.set_title('Power vs Time (Box Plot)')
+    ax.set_title('Power vs Time (Box Plot)', fontsize = 16)
     ax.set_xlim(0, len(bins))
     return scaled_positions, bins
 
-def plot_throughput_vs_time(df, ax, bin_edges, line_positions, power_bins):
+def plot_throughput_vs_time(kwargs):
+    df = kwargs['df']
+    ax = kwargs['ax']
+    bin_edges =kwargs['bin_edges']
+    line_positions = kwargs['line_positions']
+    modes_between_lines = kwargs['modes_between_lines']
+    power_bins = kwargs['power_bins']
+
     df = bin_time(df, time_column='time', bin_size=10)
     boxprops, medianprops, whiskerprops, capprops = get_boxplot_properties()
     mean_values= []
@@ -354,21 +381,21 @@ def plot_throughput_vs_time(df, ax, bin_edges, line_positions, power_bins):
 
 
     for i, pos in enumerate(line_positions[:-1]):
+        next_pos = line_positions[i + 1]
         ax.axvline(x=pos, color='black', linestyle='--', linewidth=1)
 
-        mid_position = (pos + line_positions[i + 1]) / 2
-        if i < len(interval_means):
-            ax.text(mid_position, ax.get_ylim()[1] * 0.9,
-                    f'Mean: {interval_means[i]:.2f}',
-                    horizontalalignment='center',
-                    verticalalignment='center',
-                    color='red',
-                    fontsize=8)
-    for pos in line_positions:
-        ax.axvline(x=pos, color='black', linestyle='--', linewidth=1)
+        for i, pos in enumerate(line_positions[:-1]):
+            next_pos = line_positions[i + 1]
+            mode = modes_between_lines[i]
+            ax.axvline(x=pos, color='black', linestyle='--', linewidth=1)
+            if mode != 'fixed-rate':
+                ax.hlines(y=interval_means[i], xmin=pos, xmax=next_pos, color='blue', linestyle='-', linewidth=1.5)
+                ax.text((pos + next_pos) / 2, interval_means[i], f'Mean: {interval_means[i]:.2f}',
+                        horizontalalignment='center', verticalalignment='bottom', color='blue', fontsize=16)
+    ax.axvline(x=line_positions[-1], color='black', linestyle='--', linewidth=1)
     ax.tick_params(axis='x', which='both', bottom=False, top=False)
     ax.set_xticklabels([])
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Throughput')
-    ax.set_title('Throughput vs Time (Box Plot)')
+    ax.set_title('Throughput vs Time (Box Plot)', fontsize = 16)
     ax.set_xlim(0, len(power_bins))

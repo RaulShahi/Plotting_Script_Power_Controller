@@ -4,9 +4,14 @@ import pandas as pd
 from matplotlib import gridspec
 from utils import *
 
+plt.rcParams.update({'font.size': 16})
+
+
 def plot_response_files(trace_response_data, measured_throughput_data):
     df = pd.DataFrame(trace_response_data)
     pd.set_option('display.max_rows', None)
+
+    measured_throughput_data_with_mode = map_modes_to_throughput(df, measured_throughput_data)
     min_time = df['time'].min()
     max_time = df['time'].max()
     time_range = max_time - min_time
@@ -23,17 +28,18 @@ def plot_response_files(trace_response_data, measured_throughput_data):
 
     gs = gridspec.GridSpec(num_subplots, 1, height_ratios=[15, 3, 3])
     ax1 = fig.add_subplot(gs[0])
+    rounded_positions, modes_between_lines = add_grid_lines_to_separate_modes(ax1, df)
     bin_edges = get_bin_edges(min_time, max_time, 10)
-    label_numbers, rate_x_limit = plot_rate_vs_time(df, ax1)
+    rate_x_limit = plot_rate_vs_time({'df':df,'ax':ax1, 'rounded_position':rounded_positions, 'modes_between_lines':modes_between_lines,})
 
     ax2 = fig.add_subplot(gs[1])
-    line_positions, power_bins = plot_power_vs_time(df, ax2, bin_edges, label_numbers, rate_x_limit)
+    line_positions, power_bins = plot_power_vs_time({'df':df, 'ax':ax2, 'bin_edges':bin_edges, 'rounded_positions':rounded_positions, 'modes_between_lines':modes_between_lines,'rate_x_limit':rate_x_limit})
 
     ax3 = fig.add_subplot(gs[2])
-    plot_throughput_vs_time(measured_throughput_data, ax3, bin_edges, line_positions, power_bins)
+    plot_throughput_vs_time({'df':measured_throughput_data_with_mode, 'ax': ax3, 'bin_edges': bin_edges, 'line_positions': line_positions, 'modes_between_lines':modes_between_lines, 'power_bins':power_bins})
     fig.subplots_adjust(top=0.9, right=0.75)
     plt.tight_layout()
-    plt.savefig('new_design_large_data1.png', bbox_inches='tight', pad_inches=0.1, dpi=700)
+    plt.savefig('3rdupanddown_routers.png', bbox_inches='tight', pad_inches=0.1, dpi=500)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process CSV files in a directory.")
