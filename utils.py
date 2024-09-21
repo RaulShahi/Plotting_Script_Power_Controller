@@ -54,34 +54,35 @@ def extract_experiment_order(file_path):
         return None
 
 def categorize_files(directory):
-    """Processing the different csv files obtained post experiment"""
-    measured_throughput_file = None
-    expected_throughput_files = []
-    response_files = []
+    """Processing the different csv files obtained post-experiment."""
+    measured_throughput_files = {}
+    response_files = {}
 
     try:
-        if os.path.isdir(directory):
-            print(f"Listing and processing files in directory: {directory}\n")
-            for filename in os.listdir(directory):
-                file_path = os.path.join(directory, filename)
+        for iteration_folder in os.listdir(directory):
+            iteration_path = os.path.join(directory, iteration_folder)
+            if os.path.isdir(iteration_path):
+                print(f"Listing and processing files in iteration folder: {iteration_path}")
+                measured_throughput_files[iteration_folder] = []
+                response_files[iteration_folder] = []
 
-                if os.path.isfile(file_path) and filename.endswith('.csv'):
-                    if filename == "ap_orca_header.csv":
-                        continue
-                    if "expected_throughput" in filename.lower():
-                        expected_throughput_files.append(file_path)
-                    elif "throughput" in filename.lower():
-                        measured_throughput_file = file_path
-                    else:
-                        response_files.append(file_path)
+                for filename in os.listdir(iteration_path):
+                    file_path = os.path.join(iteration_path, filename)
 
-        else:
-            print(f"The path '{directory}' is not a directory.")
+                    if os.path.isfile(file_path) and filename.endswith('.csv'):
+                        if filename == "ap_orca_header.csv":
+                            continue
+                        if "expected_throughput" in filename.lower():
+                            continue  # Ignore expected throughput files
+                        elif "throughput" in filename.lower():
+                            measured_throughput_files[iteration_folder].append(file_path)
+                        else:
+                            response_files[iteration_folder].append(file_path)
+        return measured_throughput_files, response_files
 
     except Exception as e:
         print(f"An error occurred: {e}")
 
-    return expected_throughput_files,measured_throughput_file, response_files
 
 def read_csv_to_dict(file_path, delimiter):
     """This function reads the trace response csv files obtained after the experiment"""
@@ -154,11 +155,48 @@ def process_expected_throughput_files(expected_throughput_files):
 
     return averaged_df
 
-def process_measured_throughput_file(file_path):
+# def process_measured_throughput_file(file_path):
 
-    print(f"Processing throughput file: {file_path}")
-    measured_throughput_data = pd.read_csv(file_path, sep='\s+', header=None, skiprows=1, names=['time', 'throughput'])
-    return measured_throughput_data
+#     print(f"Processing throughput file: {file_path}")
+#     measured_throughput_data = pd.read_csv(file_path, sep='\s+', header=None, skiprows=1, names=['time', 'throughput'])
+#     return measured_throughput_data
+
+def process_measured_throughput_files(iteration_files_dict):
+    """Processes the measured throughput files for multiple iterations, averaging data based on the first iteration's timestamps."""
+
+    combined_data = {}
+    for iteration, throughput_files in iteration_files_dict.items():
+        iteration_data = []
+
+        for file_path in throughput_files:
+            print(f"Processing throughput file: {file_path} for iteration: {iteration}")
+            data = pd.read_csv(file_path, sep='\s+', header=None, skiprows=1, names=['time', 'throughput'])
+            iteration_data.append(data)
+
+        combined_data[iteration] = pd.concat(iteration_data, ignore_index=True)
+
+    first_iteration_data = combined_data.get('1', pd.DataFrame())
+    averaged_data = []
+
+    for row_index in range(len(first_iteration_data)):
+        base_entry = first_iteration_data.iloc[row_index]
+        averaged_entry = {'time': base_entry['time']}
+        values_to_average = [base_entry['throughput']]
+
+        for iteration, data in combined_data.items():
+            if iteration == '1':
+                continue
+            if row_index < len(data):
+                values_to_average.append(data.iloc[row_index]['throughput'])
+
+        if values_to_average:
+            averaged_entry['throughput'] = sum(values_to_average) / len(values_to_average)  # Average
+
+        averaged_data.append(averaged_entry)
+        averaged_df = pd.DataFrame(averaged_data)
+
+    return averaged_df
+
 
 def map_modes_to_throughput(trace_df, throughput_df):
     trace_df['second'] = trace_df['time'].apply(lambda x: int(round(x)))
@@ -168,31 +206,89 @@ def map_modes_to_throughput(trace_df, throughput_df):
 
     return throughput_df
 
-def process_trace_response_files(trace_response_files):
-    """This function processes the response csv files of different parts from the experiment.
-    The timing of different parts(csv files) is combined so that they appear to be linear
-    """
-    trace_response_files.sort(key=lambda x: extract_experiment_order(x))
-    trace_data = []
-    current_time_offset = 0
-    cumulative_time = 0
+# def process_trace_response_files(trace_response_files):
+#     """This function processes the response csv files of different parts from the experiment.
+#     The timing of different parts(csv files) is combined so that they appear to be linear
+#     """
+#     trace_response_files.sort(key=lambda x: extract_experiment_order(x))
+#     trace_data = []
+#     current_time_offset = 0
+#     cumulative_time = 0
 
-    for file_path in trace_response_files:
-        print(f"Processing response file: {file_path}")
-        mode = extract_mode_from_filename(file_path)
-        data = read_csv_to_dict(file_path, delimiter=';')
-        if not data:
-            continue
-        start_time = cumulative_time
-        end_time = cumulative_time + data[-1]['time']
-        cumulative_time = end_time
-        for entry in data:
-            entry['time'] += current_time_offset
-            entry['mode'] = mode
-            trace_data.append(entry)
+#     for file_path in trace_response_files:
+#         print(f"Processing response file: {file_path}")
+#         mode = extract_mode_from_filename(file_path)
+#         data = read_csv_to_dict(file_path, delimiter=';')
+#         if not data:
+#             continue
+#         start_time = cumulative_time
+#         end_time = cumulative_time + data[-1]['time']
+#         cumulative_time = end_time
+#         for entry in data:
+#             entry['time'] += current_time_offset
+#             entry['mode'] = mode
+#             trace_data.append(entry)
 
-        current_time_offset = trace_data[-1]['time'] + 1
-    return trace_data
+#         current_time_offset = trace_data[-1]['time'] + 1
+#     return trace_data
+
+def process_trace_response_files(iteration_files_dict):
+    """Processes the response CSV files for multiple iterations, averaging data based on the first iteration's row indices."""
+
+    combined_data = {}
+
+    # Iterate through each iteration's files
+    for iteration, trace_response_files in iteration_files_dict.items():
+        trace_response_files.sort(key=lambda x: extract_experiment_order(x))
+
+        iteration_data = []
+        current_time_offset = 0
+
+        for file_path in trace_response_files:
+            print(f"Processing response file: {file_path} for iteration: {iteration}")
+            mode = extract_mode_from_filename(file_path)
+            data = read_csv_to_dict(file_path, delimiter=';')
+            if not data:
+                continue
+
+            for entry in data:
+                entry['time'] += current_time_offset
+                entry['mode'] = mode
+                iteration_data.append(entry)
+
+            current_time_offset = iteration_data[-1]['time'] + 1
+
+        combined_data[iteration] = iteration_data
+
+    first_iteration_data = combined_data.get('1', [])
+    averaged_data = []
+
+    for row_index in range(len(first_iteration_data)):
+        base_entry = first_iteration_data[row_index]
+        averaged_entry = {'time': base_entry['time'], 'mode': base_entry['mode']}
+        values_to_average = [base_entry]  # Include the first iteration's entry
+
+        for iteration, data in combined_data.items():
+            if iteration == '1':
+                continue
+            if row_index < len(data):
+                values_to_average.append(data[row_index])
+
+        hex_rates = [int(value['rate'], 16) for value in values_to_average if 'rate' in value]
+        if hex_rates:
+            average_rate = sum(hex_rates) // len(hex_rates)
+            averaged_entry['rate'] = hex(average_rate)[2:]
+            print(base_entry['mode'],hex(average_rate)[2:])
+
+        # Average the power
+        power_values = [value['power'] for value in values_to_average if 'power' in value]
+        if power_values:
+            averaged_entry['power'] = sum(power_values) // len(power_values)
+
+        averaged_data.append(averaged_entry)
+
+    return averaged_data
+
 
 def get_boxplot_properties():
     boxprops = dict(facecolor='none', edgecolor='black')
