@@ -155,12 +155,6 @@ def process_expected_throughput_files(expected_throughput_files):
 
     return averaged_df
 
-# def process_measured_throughput_file(file_path):
-
-#     print(f"Processing throughput file: {file_path}")
-#     measured_throughput_data = pd.read_csv(file_path, sep='\s+', header=None, skiprows=1, names=['time', 'throughput'])
-#     return measured_throughput_data
-
 def process_measured_throughput_files(iteration_files_dict):
     """Processes the measured throughput files for multiple iterations, averaging data based on the first iteration's timestamps."""
 
@@ -190,7 +184,7 @@ def process_measured_throughput_files(iteration_files_dict):
                 values_to_average.append(data.iloc[row_index]['throughput'])
 
         if values_to_average:
-            averaged_entry['throughput'] = sum(values_to_average) / len(values_to_average)  # Average
+            averaged_entry['throughput'] = sum(values_to_average) / len(values_to_average)
 
         averaged_data.append(averaged_entry)
         averaged_df = pd.DataFrame(averaged_data)
@@ -206,38 +200,10 @@ def map_modes_to_throughput(trace_df, throughput_df):
 
     return throughput_df
 
-# def process_trace_response_files(trace_response_files):
-#     """This function processes the response csv files of different parts from the experiment.
-#     The timing of different parts(csv files) is combined so that they appear to be linear
-#     """
-#     trace_response_files.sort(key=lambda x: extract_experiment_order(x))
-#     trace_data = []
-#     current_time_offset = 0
-#     cumulative_time = 0
-
-#     for file_path in trace_response_files:
-#         print(f"Processing response file: {file_path}")
-#         mode = extract_mode_from_filename(file_path)
-#         data = read_csv_to_dict(file_path, delimiter=';')
-#         if not data:
-#             continue
-#         start_time = cumulative_time
-#         end_time = cumulative_time + data[-1]['time']
-#         cumulative_time = end_time
-#         for entry in data:
-#             entry['time'] += current_time_offset
-#             entry['mode'] = mode
-#             trace_data.append(entry)
-
-#         current_time_offset = trace_data[-1]['time'] + 1
-#     return trace_data
-
 def process_trace_response_files(iteration_files_dict):
     """Processes the response CSV files for multiple iterations, averaging data based on the first iteration's row indices."""
 
     combined_data = {}
-
-    # Iterate through each iteration's files
     for iteration, trace_response_files in iteration_files_dict.items():
         trace_response_files.sort(key=lambda x: extract_experiment_order(x))
 
@@ -266,21 +232,20 @@ def process_trace_response_files(iteration_files_dict):
     for row_index in range(len(first_iteration_data)):
         base_entry = first_iteration_data[row_index]
         averaged_entry = {'time': base_entry['time'], 'mode': base_entry['mode']}
-        values_to_average = [base_entry]  # Include the first iteration's entry
+        values_to_average = [base_entry]
 
         for iteration, data in combined_data.items():
             if iteration == '1':
                 continue
             if row_index < len(data):
-                values_to_average.append(data[row_index])
+                current_entry = data[row_index]
+                if current_entry['mode'] == base_entry['mode']:
+                    values_to_average.append(current_entry)
 
         hex_rates = [int(value['rate'], 16) for value in values_to_average if 'rate' in value]
         if hex_rates:
             average_rate = sum(hex_rates) // len(hex_rates)
             averaged_entry['rate'] = hex(average_rate)[2:]
-            print(base_entry['mode'],hex(average_rate)[2:])
-
-        # Average the power
         power_values = [value['power'] for value in values_to_average if 'power' in value]
         if power_values:
             averaged_entry['power'] = sum(power_values) // len(power_values)
@@ -288,6 +253,7 @@ def process_trace_response_files(iteration_files_dict):
         averaged_data.append(averaged_entry)
 
     return averaged_data
+
 
 
 def get_boxplot_properties():
