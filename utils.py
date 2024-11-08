@@ -57,6 +57,7 @@ def categorize_files(directory):
     """Processing the different csv files obtained post-experiment."""
     measured_throughput_files = {}
     response_files = {}
+    expected_throughput_files = {}
 
     try:
         for iteration_folder in os.listdir(directory):
@@ -65,6 +66,7 @@ def categorize_files(directory):
                 print(f"Listing and processing files in iteration folder: {iteration_path}")
                 measured_throughput_files[iteration_folder] = []
                 response_files[iteration_folder] = []
+                expected_throughput_files[iteration_folder] = []
 
                 for filename in os.listdir(iteration_path):
                     file_path = os.path.join(iteration_path, filename)
@@ -73,16 +75,15 @@ def categorize_files(directory):
                         if filename == "ap_orca_header.csv":
                             continue
                         if "expected_throughput" in filename.lower():
-                            continue  # Ignore expected throughput files
+                            expected_throughput_files[iteration_folder].append(file_path)
                         elif "throughput" in filename.lower():
                             measured_throughput_files[iteration_folder].append(file_path)
                         else:
                             response_files[iteration_folder].append(file_path)
-        return measured_throughput_files, response_files
+        return measured_throughput_files, expected_throughput_files,response_files
 
     except Exception as e:
         print(f"An error occurred: {e}")
-
 
 def read_csv_to_dict(file_path, delimiter):
     """This function reads the trace response csv files obtained after the experiment"""
@@ -122,38 +123,42 @@ def read_csv_to_dict(file_path, delimiter):
 
     return filtered_data
 
-def process_expected_throughput_files(expected_throughput_files):
+def process_expected_throughput_files(expected_throughput_files_dict):
     """This function was used to process expected throughput file computed within the power controller.
-    The obtained data was averaged per minute. However we have removed the usage of this function for now"""
-    expected_throughput_files.sort(key=lambda x: extract_expected_throughput_in_order(x))
-    combined_expected_throughput_data = []
-    cumulative_time = 0
-    current_time_offset = 0
+    The obtained data was averaged per minute."""
 
-    for file_path in expected_throughput_files:
-        print(f"Processing expected throughput file: {file_path}")
-        throughput_data = pd.read_csv(file_path, sep='\s+', header=None, skiprows=1, names=['time', 'throughput'])
+    combined_expected_throughput_data = {}
+    for iteration,expected_throughput_files in expected_throughput_files_dict.items():
+        expected_throughput_files.sort(key=lambda x: extract_expected_throughput_in_order(x))
+        cumulative_time = 0
+        current_time_offset = 0
+        iteration_data = []
 
-        if throughput_data.empty:
+        for file_path in expected_throughput_files:
+            print(f"Processing expected throughput file: {file_path} for iteration: {iteration}")
+            throughput_data = pd.read_csv(file_path, sep='\s+', header=None, skiprows=1, names=['time', 'throughput','power_mode'])
+            if throughput_data.empty:
+                continue
+
+            throughput_data['time'] = throughput_data['time'] / 1000.0
+            throughput_data['time'] += current_time_offset
+            start_time = cumulative_time
+            end_time= cumulative_time + throughput_data['time'].iloc[-1]
+            cumulative_time = end_time
+            current_time_offset = throughput_data['time'].iloc[-1] + 1
+            iteration_data.append(throughput_data)
+        if iteration_data:
+            iteration_wise_df = pd.concat(iteration_data, ignore_index=True)
+
+        combined_expected_throughput_data[iteration] = iteration_wise_df
+    base_data = combined_expected_throughput_data.get('1', [])
+    for iteration in combined_expected_throughput_data:
+        if iteration == '1':
             continue
-        throughput_data['time'] = throughput_data['time'] / 1000.0
-        throughput_data['time'] += current_time_offset
-
-        start_time = cumulative_time
-        end_time= cumulative_time + throughput_data['time'].iloc[-1]
-        cumulative_time = end_time
-
-        current_time_offset = throughput_data['time'].iloc[-1] + 1
-
-        combined_expected_throughput_data.append(throughput_data)
-
-    combined_df = pd.concat(combined_expected_throughput_data, ignore_index=True)
-    combined_df['rounded_time'] = combined_df['time'].round()
-
-    averaged_df = combined_df.groupby('rounded_time').agg({'throughput': 'mean'}).reset_index()
-    averaged_df.rename(columns={'rounded_time': 'time'}, inplace=True)
-
-    return averaged_df
+        base_data = pd.concat([base_data, combined_expected_throughput_data[iteration]], ignore_index=True)
+        base_data.sort_values(by='time', inplace=True)
+        base_data.reset_index(drop =True, inplace=True)
+    return base_data
 
 def process_measured_throughput_files(iteration_files_dict):
     """Processes the measured throughput files for multiple iterations, averaging data based on the first iteration's timestamps."""
@@ -461,3 +466,16 @@ def plot_throughput_vs_time(kwargs):
     ax.set_ylabel('Throughput')
     ax.set_title('Throughput vs Time (Box Plot)', fontsize = 16)
     ax.set_xlim(0, len(power_bins))
+
+def plot_expected_tp_vs_max_tp(kwargs):
+    df = kwargs['df']
+    ax = kwargs['ax']
+
+    sns.scatterplot(
+        data=df, x='time', y='throughput', hue='power_mode',
+        style='power_mode', ax=ax, palette={'max_power': 'red', 'optimal_power': 'blue'},
+        markers={'max_power': 'o', 'optimal_power': 'X'}, s=100, alpha=0.7
+    )
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Throughput (Mbps)')
+    ax.set_title('Expected Throughput vs Max Throughput')

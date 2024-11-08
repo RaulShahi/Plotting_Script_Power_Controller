@@ -8,6 +8,7 @@ plt.rcParams.update({'font.size': 16})
 
 
 def plot_response_files(trace_response_data, measured_throughput_data):
+    #expected_throughput_data
     df = pd.DataFrame(trace_response_data)
     pd.set_option('display.max_rows', None)
     min_time = df['time'].min()
@@ -20,11 +21,11 @@ def plot_response_files(trace_response_data, measured_throughput_data):
         fig_width = time_range * width_factor
 
     base_height = 10
-    num_subplots = 3
+    num_subplots = 4
     total_height = base_height * num_subplots
     fig = plt.figure(figsize=(fig_width, total_height))
 
-    gs = gridspec.GridSpec(num_subplots, 1, height_ratios=[15, 3, 3])
+    gs = gridspec.GridSpec(num_subplots, 1, height_ratios=[15, 3, 3, 3])
     ax1 = fig.add_subplot(gs[0])
     rounded_positions, modes_between_lines = add_grid_lines_to_separate_modes(ax1, df)
     bin_edges = get_bin_edges(min_time, max_time, 10)
@@ -35,15 +36,19 @@ def plot_response_files(trace_response_data, measured_throughput_data):
 
     ax3 = fig.add_subplot(gs[2])
     plot_throughput_vs_time({'df':measured_throughput_data, 'ax': ax3, 'bin_edges': bin_edges, 'line_positions': line_positions, 'modes_between_lines':modes_between_lines, 'power_bins':power_bins})
+
+    # ax4 = fig.add_subplot(gs[3])
+    # plot_expected_tp_vs_max_tp({'df':expected_throughput_data, 'ax':ax4})
     fig.subplots_adjust(top=0.9, right=0.75)
     plt.tight_layout()
-    plt.savefig('configurable_intervals.png', bbox_inches='tight', pad_inches=0.1, dpi=500)
+    plt.savefig('old_new_algorithm_test.png', bbox_inches='tight', pad_inches=0.1, dpi=500)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process CSV files in a directory.")
     parser.add_argument("directory", type=str, help="The directory path to process files from.")
     args = parser.parse_args()
-    measured_throughput_file_dict, trace_response_files_dict = categorize_files(args.directory)
+    measured_throughput_file_dict, expected_throughput_files_dict, trace_response_files_dict = categorize_files(args.directory)
     measured_throughput_data = process_measured_throughput_files(measured_throughput_file_dict)
+    # expected_throughput_data = process_expected_throughput_files(expected_throughput_files_dict)
     trace_response_data = process_trace_response_files(trace_response_files_dict)
     plot_response_files(trace_response_data, measured_throughput_data)
