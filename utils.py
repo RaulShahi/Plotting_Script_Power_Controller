@@ -99,17 +99,24 @@ def categorize_files(directory):
 
 
 def read_csv_to_dict(file_path, delimiter):
-    """This function reads the trace response csv files obtained after the experiment"""
+    """This function reads the trace response csv files obtained after the experiment
+    We start by filtering the trace response. Collect the txs lines where the packet transmission is
+    successful. From those lines, we extract the timestamp, rate and power.
+
+    For the three phase power model, we try to separate the txs lines based on power type
+    """
     filtered_data = []
     first_time = None
+
+    current_power_type = 'not_from_power_controller'
     try:
         with open(file_path, "r") as file:
             csv_reader = csv.reader(file, delimiter=delimiter)
             for row in csv_reader:
-                if len(row) < 11:
-                    continue
+                if row[2] == "set_power_rc":
+                    current_power_type = row[-1]
 
-                if row[2] == "txs" and len(row[1]) == 16:
+                elif row[2] == "txs" and len(row[1]) == 16 and len(row) >= 11:
                     try:
                         actual_time = hex_to_time(row[1])
 
@@ -123,19 +130,19 @@ def read_csv_to_dict(file_path, delimiter):
                             if split_values[-1].isdigit():
                                 rate = split_values[0]
                                 power = int(split_values[-1], 16)
-                                filtered_data.append(
-                                    {
+                                filtered_data.append({
                                         "time": relative_time,
                                         "rate": rate,
                                         "power": power,
-                                    }
-                                )
+                                        "power_type": current_power_type
+                                    })
                                 break
+
                     except ValueError as e:
                         print(f"ValueError processing row {row}: {e}")
+
     except Exception as e:
         print(f"Error reading file {file_path}: {e}")
-
     return filtered_data
 
 
@@ -276,7 +283,7 @@ def process_trace_response_files(iteration_files_dict):
 
     for row_index in range(len(first_iteration_data)):
         base_entry = first_iteration_data[row_index]
-        averaged_entry = {"time": base_entry["time"], "mode": base_entry["mode"]}
+        averaged_entry = {"time": base_entry["time"], "mode": base_entry["mode"], "power_type": base_entry["power_type"]}
         values_to_average = [base_entry]
 
         for iteration, data in combined_data.items():
@@ -284,7 +291,7 @@ def process_trace_response_files(iteration_files_dict):
                 continue
             if row_index < len(data):
                 current_entry = data[row_index]
-                if current_entry["mode"] == base_entry["mode"]:
+                if current_entry["mode"] == base_entry["mode"] and current_entry["power_type"]==base_entry["power_type"]:
                     values_to_average.append(current_entry)
 
         hex_rates = [
@@ -442,6 +449,15 @@ def plot_power_vs_time(kwargs):
     bins = df["binned_time"].cat.categories
     mean_values = []
 
+    power_type_palette = {
+        "not_from_power_controller": "blue",
+        "sample_power": "orange",
+        "data_power": "green",
+        "reference_power": "red",
+    }
+
+
+
     print("bin_edges", bin_edges, len(bin_edges))
     print("power_bins", bins, len(bins))
 
@@ -484,6 +500,13 @@ def plot_power_vs_time(kwargs):
     ax.set_title("Power vs Time (Box Plot)", fontsize=16)
     ax.set_xlim(left=0)
     ax.set_xlim(0, len(bins))
+
+    # handles = [
+    #     ax.Line2D([0], [0], color=color, lw=4, label=ptype)
+    #     for ptype, color in power_type_palette.items()
+    # ]
+    # ax.legend(handles=handles, title="Power Type")
+
     return scaled_positions, bins
 
 
@@ -500,9 +523,7 @@ def plot_throughput_vs_time(kwargs):
     df = bin_time(df, time_column="time", bin_size=bin_size)
     boxprops, medianprops, whiskerprops, capprops = get_boxplot_properties()
     mean_values = []
-    print("bin_edges", bin_edges, len(bin_edges))
-    print("power_bins", power_bins, len(power_bins))
-    print("line positions", line_positions)
+
     for i in range(len(bin_edges) - 1):
         bin_start = bin_edges[i]
         bin_end = bin_edges[i + 1]
