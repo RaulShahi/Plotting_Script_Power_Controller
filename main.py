@@ -70,7 +70,7 @@ def plot_response_files(trace_response_data, measured_throughput_data):
     fig.subplots_adjust(top=0.9, right=0.75)
     plt.tight_layout()
     plt.savefig(
-        "three phase powers3.png",
+        "4time_customized_options_multiple_floors.png",
         bbox_inches="tight",
         pad_inches=0.1,
         dpi=500,

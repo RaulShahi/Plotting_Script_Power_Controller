@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import csv
 import seaborn as sns
 import numpy as np
+from matplotlib.lines import Line2D
 
 
 def hex_to_int(hex_str):
@@ -109,12 +110,18 @@ def read_csv_to_dict(file_path, delimiter):
     first_time = None
 
     current_power_type = 'not_from_power_controller'
+    pending_power_type = None
     try:
         with open(file_path, "r") as file:
             csv_reader = csv.reader(file, delimiter=delimiter)
             for row in csv_reader:
                 if row[2] == "set_power_rc":
-                    current_power_type = row[-1]
+                    pending_power_type = row[-1]
+
+                elif row[2] == "set_power":
+                    if pending_power_type is not None:
+                        current_power_type = pending_power_type
+                        pending_power_type = None
 
                 elif row[2] == "txs" and len(row[1]) == 16 and len(row) >= 11:
                     try:
@@ -312,6 +319,7 @@ def process_trace_response_files(iteration_files_dict):
 
 
 def get_boxplot_properties():
+
     boxprops = dict(facecolor="none", edgecolor="black")
     medianprops = dict(color="black")
     whiskerprops = dict(color="black")
@@ -443,40 +451,61 @@ def plot_power_vs_time(kwargs):
     modes_between_lines = kwargs["modes_between_lines"]
     rate_x_limit = kwargs["rate_x_limit"]
     bin_size = kwargs["bin_size"]
+    boxprops, medianprops, whiskerprops, capprops = get_boxplot_properties()
 
     df = bin_time(df, time_column="time", bin_size=bin_size)
-    boxprops, medianprops, whiskerprops, capprops = get_boxplot_properties()
     bins = df["binned_time"].cat.categories
     mean_values = []
-
     power_type_palette = {
-        "not_from_power_controller": "blue",
+        "not_from_power_controller": "none",
         "sample_power": "orange",
         "data_power": "green",
         "reference_power": "red",
     }
 
 
-
     print("bin_edges", bin_edges, len(bin_edges))
     print("power_bins", bins, len(bins))
 
-    for i in range(len(bin_edges) - 1):
-        bin_data = df[(df["time"] >= bin_edges[i]) & (df["time"] < bin_edges[i + 1])]
+    for bin_idx, bin_edge in enumerate(bin_edges[:-1]):
+        bin_data = df[(df["time"] >= bin_edges[bin_idx]) & (df["time"] < bin_edges[bin_idx + 1])]
 
         if not bin_data.empty:
-            sns.boxplot(
-                data=bin_data,
-                x=[i] * len(bin_data),
-                y="power",
-                ax=ax,
-                boxprops=boxprops,
-                medianprops=medianprops,
-                whiskerprops=whiskerprops,
-                capprops=capprops,
-            )
-            mean_value = bin_data["power"].mean()
-            mean_values.append(mean_value)
+            grouped = bin_data.groupby("power_type")
+
+            for power_type_idx, (power_type, group) in enumerate(grouped):
+                power_color = power_type_palette[power_type]
+                edge_color = "black" if power_color == "none" else power_color
+                sns.boxplot(
+                    data=group,
+                    x=[bin_idx] * len(group),  # Offset x-position for each power_type
+                    y="power",
+                    ax=ax,
+                    boxprops=dict(facecolor=power_color, edgecolor= edge_color),
+                    medianprops=dict(color=power_color),
+                    whiskerprops=dict(color=power_color),
+                    capprops=dict(color=power_color),
+                    flierprops = dict(marker='o', markerfacecolor=power_color)
+                )
+                mean_value = group["power"].mean()
+                mean_values.append(mean_value)
+
+    # for i in range(len(bin_edges) - 1):
+    #     bin_data = df[(df["time"] >= bin_edges[i]) & (df["time"] < bin_edges[i + 1])]
+
+    #     if not bin_data.empty:
+    #         sns.boxplot(
+    #             data=bin_data,
+    #             x=[i] * len(bin_data),
+    #             y="power",
+    #             ax=ax,
+    #             boxprops=boxprops,
+    #             medianprops=medianprops,
+    #             whiskerprops=whiskerprops,
+    #             capprops=capprops,
+    #         )
+    #         mean_value = bin_data["power"].mean()
+    #         mean_values.append(mean_value)
 
     scaled_positions = scale_line_positions(
         rate_line_positions, rate_x_limit[1], len(bins)
@@ -501,11 +530,11 @@ def plot_power_vs_time(kwargs):
     ax.set_xlim(left=0)
     ax.set_xlim(0, len(bins))
 
-    # handles = [
-    #     ax.Line2D([0], [0], color=color, lw=4, label=ptype)
-    #     for ptype, color in power_type_palette.items()
-    # ]
-    # ax.legend(handles=handles, title="Power Type")
+    handles = [
+        Line2D([0], [0], color=color, lw=4, label=ptype)
+        for ptype, color in power_type_palette.items()
+    ]
+    ax.legend(handles=handles, title="Power Type")
 
     return scaled_positions, bins
 
