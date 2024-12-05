@@ -115,6 +115,12 @@ def read_csv_to_dict(file_path, delimiter):
         with open(file_path, "r") as file:
             csv_reader = csv.reader(file, delimiter=delimiter)
             for row in csv_reader:
+                actual_time = hex_to_time(row[1])
+
+                if first_time is None:
+                    first_time = actual_time
+                relative_time = (actual_time - first_time).total_seconds()
+
                 if row[2] == "set_power_rc":
                     pending_power_type = row[-1]
 
@@ -123,25 +129,28 @@ def read_csv_to_dict(file_path, delimiter):
                         current_power_type = pending_power_type
                         pending_power_type = None
 
+                elif row[2] == "est_tp":
+
+                    filtered_data.append({
+                        "trace_type" : row[2],
+                        "time": relative_time,
+                        "est_tp": int(row[4], 16)/10
+                    })
+
                 elif row[2] == "txs" and len(row[1]) == 16 and len(row) >= 11:
                     try:
-                        actual_time = hex_to_time(row[1])
-
-                        if first_time is None:
-                            first_time = actual_time
-
-                        relative_time = (actual_time - first_time).total_seconds()
-
                         for i in range(len(row) - 1, 6, -1):
                             split_values = row[i].split(",")
                             if split_values[-1].isdigit():
                                 rate = split_values[0]
                                 power = int(split_values[-1], 16)
                                 filtered_data.append({
+                                        "trace_type" : row[2],
                                         "time": relative_time,
                                         "rate": rate,
                                         "power": power,
                                         "power_type": current_power_type
+
                                     })
                                 break
 
@@ -272,7 +281,7 @@ def process_trace_response_files(iteration_files_dict):
         for file_path in trace_response_files:
             print(f"Processing response file: {file_path} for iteration: {iteration}")
             mode = extract_mode_from_filename(file_path)
-            data = read_csv_to_dict(file_path, delimiter=";")
+            data  = read_csv_to_dict(file_path, delimiter=";")
             if not data:
                 continue
 
@@ -290,7 +299,10 @@ def process_trace_response_files(iteration_files_dict):
 
     for row_index in range(len(first_iteration_data)):
         base_entry = first_iteration_data[row_index]
-        averaged_entry = {"time": base_entry["time"], "mode": base_entry["mode"], "power_type": base_entry["power_type"]}
+        averaged_entry = {"time": base_entry["time"], "mode": base_entry["mode"], "trace_type":base_entry["trace_type"], "est_tp": base_entry.get("est_tp", None)}
+
+        if "power_type" in base_entry:
+            averaged_entry["power_type"] = base_entry["power_type"]
         values_to_average = [base_entry]
 
         for iteration, data in combined_data.items():
@@ -298,8 +310,12 @@ def process_trace_response_files(iteration_files_dict):
                 continue
             if row_index < len(data):
                 current_entry = data[row_index]
-                if current_entry["mode"] == base_entry["mode"] and current_entry["power_type"]==base_entry["power_type"]:
+                if current_entry["trace_type"] == "txs":
+                    if current_entry["mode"] == base_entry["mode"] and current_entry["power_type"]==base_entry["power_type"]:
+                        values_to_average.append(current_entry)
+                elif current_entry["trace_type"] == "est_tp":
                     values_to_average.append(current_entry)
+
 
         hex_rates = [
             int(value["rate"], 16) for value in values_to_average if "rate" in value
@@ -490,22 +506,6 @@ def plot_power_vs_time(kwargs):
                 mean_value = group["power"].mean()
                 mean_values.append(mean_value)
 
-    # for i in range(len(bin_edges) - 1):
-    #     bin_data = df[(df["time"] >= bin_edges[i]) & (df["time"] < bin_edges[i + 1])]
-
-    #     if not bin_data.empty:
-    #         sns.boxplot(
-    #             data=bin_data,
-    #             x=[i] * len(bin_data),
-    #             y="power",
-    #             ax=ax,
-    #             boxprops=boxprops,
-    #             medianprops=medianprops,
-    #             whiskerprops=whiskerprops,
-    #             capprops=capprops,
-    #         )
-    #         mean_value = bin_data["power"].mean()
-    #         mean_values.append(mean_value)
 
     scaled_positions = scale_line_positions(
         rate_line_positions, rate_x_limit[1], len(bins)
@@ -589,22 +589,44 @@ def plot_throughput_vs_time(kwargs):
     ax.set_xlim(0, len(power_bins))
 
 
-def plot_expected_tp_vs_max_tp(kwargs):
+def plot_estimated_throughput(kwargs):
     df = kwargs["df"]
     ax = kwargs["ax"]
+    bin_edges = kwargs["bin_edges"]
+    line_positions = kwargs["line_positions"]
+    power_bins = kwargs["power_bins"]
+    bin_size = kwargs["bin_size"]
 
-    sns.scatterplot(
-        data=df,
-        x="time",
-        y="throughput",
-        hue="power_mode",
-        style="power_mode",
-        ax=ax,
-        palette={"max_power": "red", "optimal_power": "blue"},
-        markers={"max_power": "o", "optimal_power": "X"},
-        s=100,
-        alpha=0.7,
-    )
+    df = bin_time(df, time_column="time", bin_size=bin_size)
+    boxprops, medianprops, whiskerprops, capprops = get_boxplot_properties()
+
+    for i in range(len(bin_edges) - 1):
+        bin_start = bin_edges[i]
+        bin_end = bin_edges[i + 1]
+        bin_data = df[(df["time"] >= bin_start) & (df["time"] < bin_end)]
+        if not bin_data.empty:
+            sns.boxplot(
+                data=bin_data,
+                x=[i] * len(bin_data),
+                y="est_tp",
+                ax=ax,
+                boxprops=boxprops,
+                medianprops=medianprops,
+                whiskerprops=whiskerprops,
+                capprops=capprops,
+            )
+        for i, pos in enumerate(line_positions[:-1]):
+            ax.axvline(x=pos, color="black", linestyle="--", linewidth=1)
+
+            for i, pos in enumerate(line_positions[:-1]):
+                ax.axvline(x=pos, color="black", linestyle="--", linewidth=1)
+        ax.axvline(x=line_positions[-1], color="black", linestyle="--", linewidth=1)
+    ax.tick_params(axis="x", which="both", bottom=False, top=False)
+    ax.set_xticklabels([])
+    ax.set_xlim(left=0)
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Throughput (Mbps)")
-    ax.set_title("Expected Throughput vs Max Throughput")
+    ax.set_ylabel("Estimated Throughput")
+    ax.set_title("Estimated Throughput vs Time (Box Plot)", fontsize=16)
+    ax.set_xlim(0, len(power_bins))
+
+
