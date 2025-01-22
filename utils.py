@@ -131,6 +131,18 @@ def extract_experiment_order(file_path):
         print(f"Error extracting order from filename '{filename}': {e}")
         return None
 
+def calculate_cpu_load(df):
+    cpu_usage_data = pd.concat(df, ignore_index=True).sort_values('timestamp')
+    cpu_usage_data = cpu_usage_data.replace({'%': ''}, regex=True)
+    cpu_usage_data['timestamp'] = cpu_usage_data['timestamp'].str.replace(r'(\d{2})\.(\d{2})\.(\d{2})$', r'\1:\2:\3', regex=True)
+    cpu_usage_data['timestamp'] = pd.to_datetime(cpu_usage_data['timestamp'], format='%Y-%m-%d %H:%M:%S', errors='coerce')
+    cpu_usage_data.dropna(inplace=True)
+    cpu_usage_data['elapsed'] = (cpu_usage_data['timestamp'] - cpu_usage_data["timestamp"].iloc[0]).dt.total_seconds()
+    cpu_usage_data = cpu_usage_data.apply(pd.to_numeric, errors='coerce')
+
+    cpu_usage_data['cpu_load'] = 100 - cpu_usage_data['idle']
+    return cpu_usage_data
+
 
 def categorize_files(directory):
     """
@@ -141,6 +153,7 @@ def categorize_files(directory):
     and categorizing them based on keywords in their filenames:
     - Files containing "expected_throughput" are categorized as expected throughput files.
     - Files containing "throughput" are categorized as measured throughput files.
+    - Files containing "_cpu_" are categorized as cpuusage files
     - All other files are categorized as response files, excluding the 'ap_orca_header.csv' file.
 
     Parameters
@@ -160,6 +173,7 @@ def categorize_files(directory):
     measured_throughput_files = {}
     response_files = {}
     expected_throughput_files = {}
+    cpu_usage_files = {}
 
     try:
         for iteration_folder in os.listdir(directory):
@@ -171,6 +185,7 @@ def categorize_files(directory):
                 measured_throughput_files[iteration_folder] = []
                 response_files[iteration_folder] = []
                 expected_throughput_files[iteration_folder] = []
+                cpu_usage_files[iteration_folder] = []
 
                 for filename in os.listdir(iteration_path):
                     file_path = os.path.join(iteration_path, filename)
@@ -186,12 +201,17 @@ def categorize_files(directory):
                             measured_throughput_files[iteration_folder].append(
                                 file_path
                             )
+                        elif "_cpu_" in filename.lower():
+                            cpu_usage_files[iteration_folder].append(
+                                file_path
+                            )
                         else:
                             response_files[iteration_folder].append(file_path)
-        return measured_throughput_files, expected_throughput_files, response_files
+        return measured_throughput_files, expected_throughput_files, response_files, cpu_usage_files
 
     except Exception as e:
         print(f"An error occurred: {e}")
+
 
 
 def read_csv_to_dict(file_path, delimiter):
@@ -290,6 +310,62 @@ def read_csv_to_dict(file_path, delimiter):
     except Exception as e:
         print(f"Error reading file {file_path}: {e}")
     return filtered_data
+
+def process_cpu_usage_data(cpu_usage_files_dict):
+    """
+    Processes CPU usage files, combines AP and STA data for all iterations,
+    and calculates CPU load.
+
+    Parameters:
+        cpu_usage_files_dict (dict): Dictionary where keys are iteration folder names
+                                     and values are lists of file paths for CPU usage files.
+
+    Returns:
+        tuple: Two pandas DataFrames, one for AP and one for STA, with calculated CPU load.
+    """
+
+    ap_combined_data = {}
+    sta_combined_data = {}
+
+    for iteration, files in cpu_usage_files_dict.items():
+        ap_file = next((f for f in files if "_cpu_ap" in f.lower()), None)
+        sta_file = next((f for f in files if "_cpu_sta" in f.lower()), None)
+
+        if ap_file:
+            ap_data = pd.read_csv(ap_file)
+            ap_combined_data[iteration] = calculate_cpu_load([ap_data])
+
+        if sta_file:
+            sta_data = pd.read_csv(sta_file)
+            sta_combined_data[iteration] = calculate_cpu_load([sta_data])
+
+    first_ap_data = ap_combined_data.get("1", pd.DataFrame())
+    first_sta_data = sta_combined_data.get("1", pd.DataFrame())
+
+    def average_data(first_data, combined_data):
+        averaged_data = []
+        for _, base_entry in first_data.iterrows():
+            base_elapsed = base_entry["elapsed"]
+            averaged_entry = {"elapsed": base_elapsed}
+            values_to_average = [base_entry["cpu_load"]]
+
+            for iteration, data in combined_data.items():
+                if iteration == "1":
+                    continue
+                closest_row = data.iloc[(data["elapsed"] - base_elapsed).abs().argsort()[:1]]
+                if not closest_row.empty:
+                    values_to_average.append(closest_row.iloc[0]["cpu_load"])
+
+            if values_to_average:
+                averaged_entry["cpu_load"] = sum(values_to_average) / len(values_to_average)
+
+            averaged_data.append(averaged_entry)
+        return pd.DataFrame(averaged_data)
+
+    averaged_ap_df = average_data(first_ap_data, ap_combined_data)
+    averaged_sta_df = average_data(first_sta_data, sta_combined_data)
+
+    return averaged_ap_df, averaged_sta_df
 
 def process_measured_throughput_files(iteration_files_dict):
     """
@@ -975,6 +1051,38 @@ def plot_estimated_throughput(kwargs):
     ax.set_ylabel("Estimated Throughput")
     ax.set_title("Estimated Throughput vs Time (Box Plot)", fontsize=16)
     ax.set_xlim(0, len(power_bins))
+
+def plot_cpu_usage(kwargs):
+    df = kwargs['df']
+    ax = kwargs['ax']
+    rate_x_limit = kwargs["rate_x_limit"]
+    line_positions = kwargs["line_positions"]
+    title = kwargs['title']
+
+    df = df[(df['elapsed'] >= rate_x_limit[0]) & (df['elapsed'] <= rate_x_limit[1])]
+    print('tail',df.tail())
+
+    sns.set_style("whitegrid")
+    sns.scatterplot(
+        data=df,
+        x="elapsed",
+        y="cpu_load",
+        alpha=0.9,
+        ax=ax,
+        s=50
+    )
+    for i, pos in enumerate(line_positions[:-1]):
+                ax.axvline(x=pos, color="black", linestyle="--", linewidth=1)
+    ax.axvline(x=line_positions[-1], color="black", linestyle="--", linewidth=1)
+    ax.tick_params(axis="x", which="both", bottom=False, top=False)
+    ax.set_xticklabels([])
+    ax.set_xlim(rate_x_limit)  # Set x-axis limits to match rate_x_limit
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("CPU Usage")
+    ax.set_title(title)
+    print('bob',ax.get_xlim())
+
+
 
 
 

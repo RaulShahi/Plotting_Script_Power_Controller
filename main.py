@@ -7,7 +7,7 @@ from utils import *
 plt.rcParams.update({"font.size": 16})
 
 
-def plot_response_files(trace_response_data, measured_throughput_data):
+def plot_response_files(kwargs):
     """
     Generate plots based on response and throughput data.
 
@@ -20,6 +20,11 @@ def plot_response_files(trace_response_data, measured_throughput_data):
     Returns:
         None : Saves the generated plots as a PNG file in the current working directory.
     """
+    trace_response_data = kwargs['trace_response_data']
+    measured_throughput_data = kwargs['measured_throughput_data']
+    ap_cpu_usage = kwargs["ap_cpu_usage"]
+    sta_cpu_usage = kwargs["sta_cpu_usage"]
+
     df = pd.DataFrame(trace_response_data)
     pd.set_option("display.max_rows", None)
 
@@ -38,14 +43,15 @@ def plot_response_files(trace_response_data, measured_throughput_data):
     print('fig_width', fig_width, time_range)
 
     base_height = 15
-    num_subplots = 4
+    num_subplots = 6
     total_height = base_height * num_subplots
 
     fig = plt.figure(figsize=(fig_width, total_height))
 
-    gs = gridspec.GridSpec(num_subplots, 1, height_ratios=[15, 3, 3, 3])
+    gs = gridspec.GridSpec(num_subplots, 1, height_ratios=[15, 3, 3, 3, 3,3])
     ax1 = fig.add_subplot(gs[0])
     rounded_positions, modes_between_lines = add_grid_lines_to_separate_modes(ax1, df)
+    print('rounded', rounded_positions)
     bin_edges = get_bin_edges(min_time, max_time, bin_size)
     rate_x_limit = plot_rate_vs_time(
         {
@@ -55,6 +61,7 @@ def plot_response_files(trace_response_data, measured_throughput_data):
             "modes_between_lines": modes_between_lines,
         }
     )
+    print('bob1',rate_x_limit)
 
     ax2 = fig.add_subplot(gs[1])
     line_positions, power_bins = plot_power_vs_time(
@@ -94,14 +101,23 @@ def plot_response_files(trace_response_data, measured_throughput_data):
             "modes_between_lines": modes_between_lines,
         }
     )
+
+    ax5 = fig.add_subplot(gs[4])
+    ax6 = fig.add_subplot(gs[5])
+    plot_cpu_usage({'df':ap_cpu_usage, 'ax': ax5, 'title': "AP CPU Usage", "line_positions": rounded_positions, "rate_x_limit":rate_x_limit
+})
+    plot_cpu_usage({'df':sta_cpu_usage, 'ax': ax6, "title": "STA CPU Usage","line_positions": rounded_positions, "rate_x_limit":rate_x_limit
+})
     fig.subplots_adjust(top=0.9, right=0.75)
     plt.tight_layout()
     plt.savefig(
-        "isolated_setup_revised.png",
+        "cpu_usage.png",
         bbox_inches="tight",
         pad_inches=0.1,
         dpi=300,
     )
+
+
 
 
 if __name__ == "__main__":
@@ -117,10 +133,14 @@ if __name__ == "__main__":
         measured_throughput_file_dict,
         expected_throughput_files_dict,
         trace_response_files_dict,
+        cpu_usage_files_dict
     ) = categorize_files(args.directory)
+
+    ap_cpu_usage, sta_cpu_usage = process_cpu_usage_data(cpu_usage_files_dict)
     measured_throughput_data = process_measured_throughput_files(
         measured_throughput_file_dict
     )
     # expected_throughput_data = process_expected_throughput_files(expected_throughput_files_dict)
     trace_response_data = process_trace_response_files(trace_response_files_dict)
-    plot_response_files(trace_response_data, measured_throughput_data)
+    plot_response_files({'trace_response_data':trace_response_data, 'measured_throughput_data':measured_throughput_data, 'ap_cpu_usage':ap_cpu_usage, 'sta_cpu_usage':sta_cpu_usage})
+
