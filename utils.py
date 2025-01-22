@@ -16,6 +16,22 @@ def hex_to_int(hex_str):
 
 
 def hex_to_time(hex_time):
+    """Converts a hexadeical time representation into a human-readable datetime object.
+
+    Parameters
+    ----------
+        hex_time (str): The hexadecimal string representing time in nanoseconds since the Unix epoch.
+
+    Returns
+    --------
+        datetime: The corresponding datetime object if the conversion is successful.
+        None: If the input is invalid or the conversion fails, returns None and logs an error.
+
+    Raises
+    -------
+        ValueError: If the input is not a valid hexadecimal string.
+        OSError: If the computed time value is invalid.
+    """
     try:
         nanoseconds = int(hex_time, 16)
         seconds = nanoseconds / 1e9
@@ -30,7 +46,26 @@ def hex_to_time(hex_time):
 
 
 def extract_expected_throughput_in_order(file_path):
-    """Assuming filename format: "1724872312_lowest_mode_expected_throughput"""
+    """
+    Extracts the expected throughput order from a filename.
+
+    Assumes the filename format is: "<order>_lowest_mode_expected_throughput",
+    where the order is the first part of the filename, separated by underscores.
+
+    Parameters
+    ----------
+        file_path (str): The full path to the file.
+
+    Returns
+    --------
+        str: The extracted order as a string if successful.
+        None: If the filename format is invalid or an error occurs.
+
+    Raises
+    -------
+        IndexError: If the filename does not contain an underscore-separated order.
+        ValueError: If there are issues with string processing.
+    """
     filename = os.path.basename(file_path)
     try:
         return filename.split("_")[0]
@@ -40,7 +75,25 @@ def extract_expected_throughput_in_order(file_path):
 
 
 def extract_mode_from_filename(filename):
-    # Assuming filename format: "1_ap_1-Lowest_Power_orca_trace.csv"
+    """
+    Extracts the mode from a filename.
+
+    Assumes the filename format is: "1_ap_1-Lowest_Power_orca_trace.csv",
+    where the mode is the part after the last underscore (`_`) and before the hyphen (`-`).
+
+    Parameters
+    ----------
+        filename (str): The full path to the file.
+
+    Returns
+    -------
+        str: The extracted mode as a string.
+
+    Raises
+    ------
+        IndexError: If the filename format is invalid and the mode cannot be extracted.
+    """
+
     base_filename = os.path.basename(filename)
     if "_orca_trace.csv" in base_filename:
         base_filename = base_filename.replace("_orca_trace.csv", "")
@@ -49,7 +102,26 @@ def extract_mode_from_filename(filename):
 
 
 def extract_experiment_order(file_path):
-    """Assuming filename format: "1_ap_1-Lowest_Power_orca_trace.csv"""
+    """
+    Extracts the experiment order from a filename.
+
+    Assumes the filename format is: "1_ap_1-Lowest_Power_orca_trace.csv",
+    where the experiment order is the third part (index 2) of the underscore-separated (`_`) components
+    before the first hyphen (`-`).
+
+    Parameters
+    ----------
+        file_path (str): The full path to the file.
+
+    Returns
+    -------
+        int: The extracted experiment order as an integer.
+
+    Raises
+    -------
+        ValueError: If the extracted order is not a valid integer.
+        IndexError: If the filename format does not match the expected structure.
+    """
     filename = os.path.basename(file_path)
     try:
         parts = filename.split("-")[0]
@@ -61,7 +133,30 @@ def extract_experiment_order(file_path):
 
 
 def categorize_files(directory):
-    """Processing the different csv files obtained post-experiment."""
+    """
+    Categorizes CSV files in the given directory into measured throughput,
+    expected throughput, and response files based on their filenames.
+
+    Iterates over subfolders in the provided directory, looking for CSV files
+    and categorizing them based on keywords in their filenames:
+    - Files containing "expected_throughput" are categorized as expected throughput files.
+    - Files containing "throughput" are categorized as measured throughput files.
+    - All other files are categorized as response files, excluding the 'ap_orca_header.csv' file.
+
+    Parameters
+    ---------
+        directory (str): The path to the directory containing iteration folders.
+
+    Returns
+    --------
+        tuple: A tuple containing three dictionaries:
+            - measured_throughput_files: Dictionary with iteration folder names as keys
+              and lists of file paths to measured throughput files as values.
+            - expected_throughput_files: Dictionary with iteration folder names as keys
+              and lists of file paths to expected throughput files as values.
+            - response_files: Dictionary with iteration folder names as keys and lists of
+              file paths to response files as values.
+    """
     measured_throughput_files = {}
     response_files = {}
     expected_throughput_files = {}
@@ -100,121 +195,126 @@ def categorize_files(directory):
 
 
 def read_csv_to_dict(file_path, delimiter):
-    """This function reads the trace response csv files obtained after the experiment
-    We start by filtering the trace response. Collect the txs lines where the packet transmission is
-    successful. From those lines, we extract the timestamp, rate and power.
+    """
+    Reads the trace response CSV files obtained after the experiment.
 
-    For the three phase power model, we try to separate the txs lines based on power type
+    This function processes the trace response by filtering the lines based on trace type and power type.
+    Specifically, it:
+    - Filters out non-relevant rows (non "txs" and "est_tp").
+    - Collects the "txs" lines where the packet transmission is successful, extracting the timestamp, rate, and power.
+    - Separates "txs" lines based on the power type (e.g., "set_power", "set_power_rc").
+
+    Parameters
+    -----------
+    file_path : str
+        The path to the CSV file to be processed.
+
+    delimiter : str
+        The delimiter used in the CSV file (e.g., ',' or ';').
+
+    Returns
+    --------
+    list of dict
+        A list of dictionaries where each dictionary contains the filtered data for each relevant line,
+        with keys like "trace_type", "time", "rate", "power", and "power_type".
+
+    Notes
+    ------
+    - The function assumes that the trace response contains lines with the following relevant types: "txs", "est_tp", "set_power", and "set_power_rc".
+    - For the "txs" trace type, only lines with a successful packet transmission are processed, extracting the rate and power.
+    - The function also handles a "three-phase power model" by tracking and separating the power type from the power controller.
     """
     filtered_data = []
     first_time = None
 
     current_power_type = 'not_from_power_controller'
-    pending_power_type = None
+    # pending_power_type = None
     try:
         with open(file_path, "r") as file:
             csv_reader = csv.reader(file, delimiter=delimiter)
             for row in csv_reader:
-                actual_time = hex_to_time(row[1])
+                if row[2] == "log":
+                    #pending_power_type = row[-1]
+                    current_power_type = row[-1]
 
-                if first_time is None:
-                    first_time = actual_time
-                relative_time = (actual_time - first_time).total_seconds()
+                # if row[2] == "set_power":
+                #     if pending_power_type is not None:
+                #         current_power_type = pending_power_type
+                #         pending_power_type = None
 
-                if row[2] == "set_power_rc":
-                    pending_power_type = row[-1]
-
-                elif row[2] == "set_power":
-                    if pending_power_type is not None:
-                        current_power_type = pending_power_type
-                        pending_power_type = None
-
-                elif row[2] == "est_tp":
-
-                    filtered_data.append({
-                        "trace_type" : row[2],
-                        "time": relative_time,
-                        "est_tp": int(row[4], 16)/10
-                    })
-
-                elif row[2] == "txs" and len(row[1]) == 16 and len(row) >= 11:
+                if row[2] not in {"txs", "est_tp"}:
+                    continue
+                if len(row[1]) == 16 :
                     try:
-                        for i in range(len(row) - 1, 6, -1):
-                            split_values = row[i].split(",")
-                            if split_values[-1].isdigit():
-                                rate = split_values[0]
-                                power = int(split_values[-1], 16)
-                                filtered_data.append({
-                                        "trace_type" : row[2],
-                                        "time": relative_time,
-                                        "rate": rate,
-                                        "power": power,
-                                        "power_type": current_power_type
+                        actual_time = hex_to_time(row[1])
 
-                                    })
-                                break
+                        if first_time is None:
+                            first_time = actual_time
+                        relative_time = (actual_time - first_time).total_seconds()
 
+                        if row[2] == "log":
+                            current_power_type = row[-1]
+
+                        elif  row[2] == "est_tp":
+                            filtered_data.append({
+                                "trace_type" : row[2],
+                                "time": relative_time,
+                                "est_tp": int(row[4], 16)/10
+                            })
+
+                        # elif row[2] == "set_power":
+                        #     if pending_power_type is not None:
+                        #         current_power_type = pending_power_type
+                        #         pending_power_type = None
+
+                        elif row[2] == "txs" and len(row) >= 11:
+                            for i in range(len(row) - 1, 6, -1):
+                                split_values = row[i].split(",")
+                                if split_values[-1].isdigit():
+                                    rate = split_values[0]
+                                    power = int(split_values[-1], 16)
+                                    filtered_data.append({
+                                            "trace_type" : row[2],
+                                            "time": relative_time,
+                                            "rate": rate,
+                                            "power": power,
+                                            "power_type": current_power_type
+
+                                        })
+                                    break
                     except ValueError as e:
                         print(f"ValueError processing row {row}: {e}")
+
+
 
     except Exception as e:
         print(f"Error reading file {file_path}: {e}")
     return filtered_data
 
-
-def process_expected_throughput_files(expected_throughput_files_dict):
-    """This function was used to process expected throughput file computed within the power controller.
-    The obtained data was averaged per minute."""
-
-    combined_expected_throughput_data = {}
-    for iteration, expected_throughput_files in expected_throughput_files_dict.items():
-        expected_throughput_files.sort(
-            key=lambda x: extract_expected_throughput_in_order(x)
-        )
-        cumulative_time = 0
-        current_time_offset = 0
-        iteration_data = []
-
-        for file_path in expected_throughput_files:
-            print(
-                f"Processing expected throughput file: {file_path} for iteration: {iteration}"
-            )
-            throughput_data = pd.read_csv(
-                file_path,
-                sep="\s+",
-                header=None,
-                skiprows=1,
-                names=["time", "throughput", "power_mode"],
-            )
-            if throughput_data.empty:
-                continue
-
-            throughput_data["time"] = throughput_data["time"] / 1000.0
-            throughput_data["time"] += current_time_offset
-            start_time = cumulative_time
-            end_time = cumulative_time + throughput_data["time"].iloc[-1]
-            cumulative_time = end_time
-            current_time_offset = throughput_data["time"].iloc[-1] + 1
-            iteration_data.append(throughput_data)
-        if iteration_data:
-            iteration_wise_df = pd.concat(iteration_data, ignore_index=True)
-
-        combined_expected_throughput_data[iteration] = iteration_wise_df
-    base_data = combined_expected_throughput_data.get("1", [])
-    for iteration in combined_expected_throughput_data:
-        if iteration == "1":
-            continue
-        base_data = pd.concat(
-            [base_data, combined_expected_throughput_data[iteration]], ignore_index=True
-        )
-        base_data.sort_values(by="time", inplace=True)
-        base_data.reset_index(drop=True, inplace=True)
-    return base_data
-
-
 def process_measured_throughput_files(iteration_files_dict):
-    """Processes the measured throughput files for multiple iterations, averaging data based on the first iteration's timestamps."""
+    """
+    Processes the measured throughput files for multiple iterations, averaging data based on the
+    first iteration's timestamps.
 
+    Parameters
+    ----------
+    iteration_files_dict : dict
+        A dictionary where the keys are iteration identifiers (e.g., "1", "2", etc.), and the values
+        are lists of file paths corresponding to throughput data files for each iteration.
+        Each file is assumed to have a structure where the first column is time and the second column is throughput.
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame containing the averaged throughput data. The `time` column contains the timestamps,
+        and the `throughput` column contains the averaged throughput values for each timestamp across iterations.
+
+    Notes
+    -----
+    - The function assumes that the first iteration's timestamps serve as the reference for alignment.
+    - The throughput values are averaged across all available iterations for each timestamp.
+    - If a timestamp is missing in a subsequent iteration, it is ignored in the averaging calculation.
+    """
     combined_data = {}
     for iteration, throughput_files in iteration_files_dict.items():
         iteration_data = []
@@ -257,20 +357,41 @@ def process_measured_throughput_files(iteration_files_dict):
     return averaged_df
 
 
-def map_modes_to_throughput(trace_df, throughput_df):
-    trace_df["second"] = trace_df["time"].apply(lambda x: int(round(x)))
-    mode_per_second = trace_df.groupby("second")["mode"].agg(
-        lambda x: x.mode().iloc[0] if not x.mode().empty else None
-    )
-    throughput_df["second"] = throughput_df["time"].astype(int)
-    throughput_df["mode"] = throughput_df["second"].map(mode_per_second)
-
-    return throughput_df
-
-
 def process_trace_response_files(iteration_files_dict):
-    """Processes the response CSV files for multiple iterations, averaging data based on the first iteration's row indices."""
+    """
+    Processes the response CSV files for multiple iterations, averaging data based on the first iteration's row indices.
 
+    This function reads and processes trace response files for multiple iterations. It extracts relevant information such as
+    timestamp, mode, trace type (e.g., "txs" or "est_tp"), rate, and power. The data from each iteration is combined and
+    averaged for each row index based on the first iteration's data, ensuring that each row corresponds to a common
+    timestamp across all iterations.
+
+    Parameters
+    ----------
+    iteration_files_dict : dict
+        A dictionary where keys are iteration identifiers (e.g., "1", "2", etc.) and values are lists of file paths
+        to the trace response CSV files corresponding to each iteration.
+
+    Returns
+    -------
+    list of dict
+        A list of dictionaries where each dictionary represents an averaged entry. Each dictionary contains the following keys:
+        - `time`: The timestamp of the trace event.
+        - `mode`: The mode associated with the trace event.
+        - `trace_type`: The type of trace (e.g., "txs", "est_tp").
+        - `est_tp`: The estimated throughput (if present).
+        - `rate`: The average rate (if present).
+        - `power`: The average power (if present).
+        - `power_type`: The power type (if present).
+
+    Notes
+    -----
+    - The function averages data for each row index based on the first iteration's timestamps.
+    - If no data is found for an iteration, that iteration is skipped.
+    - The `rate` and `power` values are averaged across all available entries for each row index.
+    - If the `power_type` and `mode` match, the function ensures that those entries are averaged together.
+
+    """
     combined_data = {}
     for iteration, trace_response_files in iteration_files_dict.items():
         trace_response_files.sort(key=lambda x: extract_experiment_order(x))
@@ -299,6 +420,7 @@ def process_trace_response_files(iteration_files_dict):
 
     for row_index in range(len(first_iteration_data)):
         base_entry = first_iteration_data[row_index]
+
         averaged_entry = {"time": base_entry["time"], "mode": base_entry["mode"], "trace_type":base_entry["trace_type"], "est_tp": base_entry.get("est_tp", None)}
 
         if "power_type" in base_entry:
@@ -311,7 +433,7 @@ def process_trace_response_files(iteration_files_dict):
             if row_index < len(data):
                 current_entry = data[row_index]
                 if current_entry["trace_type"] == "txs":
-                    if current_entry["mode"] == base_entry["mode"] and current_entry["power_type"]==base_entry["power_type"]:
+                    if (current_entry["mode"] == base_entry["mode"] and  ("power_type" not in current_entry or current_entry["power_type"] == base_entry.get("power_type"))):
                         values_to_average.append(current_entry)
                 elif current_entry["trace_type"] == "est_tp":
                     values_to_average.append(current_entry)
@@ -335,6 +457,26 @@ def process_trace_response_files(iteration_files_dict):
 
 
 def get_boxplot_properties():
+    """
+    Returns properties for customizing a boxplot's appearance.
+
+    This function provides default properties for different components of a boxplot, including the box, median line,
+    whiskers, and caps. These properties are used to customize the appearance of boxplots in visualizations.
+
+    Returns
+    -------
+    tuple of dicts
+        A tuple containing four dictionaries:
+        - `boxprops` : dict
+            Properties for the box (i.e., the main body of the boxplot).
+        - `medianprops` : dict
+            Properties for the median line in the boxplot.
+        - `whiskerprops` : dict
+            Properties for the whiskers extending from the box.
+        - `capprops` : dict
+            Properties for the caps at the ends of the whiskers.
+    """
+
 
     boxprops = dict(facecolor="none", edgecolor="black")
     medianprops = dict(color="black")
@@ -345,6 +487,28 @@ def get_boxplot_properties():
 
 
 def bin_time(df, time_column="time", bin_size=10):
+    """
+    Bins a time column of a DataFrame into intervals of specified size.
+
+    This function divides the data in the given `time_column` of the DataFrame into discrete time bins.
+    The size of the bins is determined by the `bin_size` parameter. The binning is performed by creating
+    bin edges based on the minimum and maximum time values and then assigning each row to its corresponding
+    bin.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        The input DataFrame containing the data to be binned.
+    time_column : str, optional
+        The name of the column containing time values to be binned (default is "time").
+    bin_size : int, optional
+        The size of each time bin in the same unit as the `time_column` (default is 10).
+
+    Returns
+    -------
+    pandas.DataFrame
+        The original DataFrame with an additional column `binned_time`, which contains the binned time intervals.
+    """
     min_time = df[time_column].min()
     max_time = df[time_column].max()
 
@@ -365,10 +529,51 @@ def bin_time(df, time_column="time", bin_size=10):
 
 
 def get_bin_edges(min_time, max_time, bin_size):
+    """
+    Generates bin edges for a time range with a specified bin size.
+
+    Parameters
+    ----------
+    min_time : int or float
+        The starting value of the time range.
+    max_time : int or float
+        The ending value of the time range.
+    bin_size : int or float
+        The size of each bin, specifying the interval between consecutive bin edges.
+
+    Returns
+    -------
+    numpy.ndarray
+        An array of bin edges from `min_time` to `max_time` with a step size of `bin_size`.
+    """
     return np.arange(min_time, max_time + bin_size, bin_size)
 
 
 def add_grid_lines_to_separate_modes(ax, df):
+    """
+    Adds vertical grid lines to the plot at times where the mode changes.
+
+    This function identifies time points where the mode changes in the given
+    DataFrame and adds vertical dashed grid lines to the plot at these times.
+    The grid lines are drawn at each mode transition, providing a clear separation
+    between different modes on the plot.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes object on which to draw the grid lines.
+    df : pandas.DataFrame
+        A DataFrame containing at least two columns: 'time' and 'mode'.
+        The 'time' column indicates the time points, and the 'mode' column indicates
+        the mode of operation at each time.
+
+    Returns
+    -------
+    list of int
+        A sorted list of unique, rounded time positions where the mode changes.
+    list of str
+        A list of modes corresponding to the times where the mode changes.
+    """
     df_sorted = df.sort_values(by="time", ascending=True)
     prev_mode = None
     prev_time = None
@@ -400,17 +605,58 @@ def add_grid_lines_to_separate_modes(ax, df):
 
 
 def scale_line_positions(line_positions, rate_x_range, power_x_range):
+    """
+    This function scales a list of line positions from one range (e.g., rate x-axis)
+    to another range (e.g., power x-axis) by applying a scaling factor calculated
+    from the ratio of the two ranges.
+
+    Parameters
+    ----------
+    line_positions : list of float
+        A list of positions (in the original rate x-axis range) that need to be scaled.
+    rate_x_range : float
+        The total range of the rate x-axis (the original range for the line positions).
+    power_x_range : float
+        The total range of the power x-axis (the target range to scale the line positions to).
+
+    Returns
+    -------
+    list of float
+        A list of scaled line positions in the target x-axis range.
+    """
+
     scaling_factor = power_x_range / rate_x_range
     return [pos * scaling_factor for pos in line_positions]
 
 
 def plot_rate_vs_time(kwargs):
+    """
+    Plots rate versus time, with separate colors for different modes.
+
+    This function creates a scatter plot showing the relationship between time and rate,
+    where different modes are distinguished by different colors. Vertical lines are added
+    to separate the different modes, and the x-axis is marked with rounded time positions.
+
+    Parameters
+    ----------
+    kwargs : dict
+        A dictionary containing the following key-value pairs:
+        - "df" (pandas DataFrame): The data to be plotted, must include 'time', 'rate', and 'mode' columns.
+        - "ax" (matplotlib Axes): The axes on which to plot the data.
+        - "rounded_position" (list of float): The x-axis positions for the vertical lines separating modes.
+        - "modes_between_lines" (list of str): The list of modes corresponding to the line positions.
+
+    Returns
+    -------
+    tuple
+        A tuple representing the limits of the x-axis (min, max).
+    """
     df = kwargs["df"]
     ax = kwargs["ax"]
     rounded_positions = kwargs["rounded_position"]
     modes_between_lines = kwargs["modes_between_lines"]
 
-    df["rate_int"] = df["rate"].apply(hex_to_int)
+    df.loc[:,"rate_int"] = df["rate"].apply(hex_to_int)
     df_sorted = df.sort_values(by="rate_int", ascending=True)
     num_modes = len(df_sorted["mode"].unique())
     color_palette = sns.color_palette("tab10", num_modes)
@@ -436,6 +682,29 @@ def plot_rate_vs_time(kwargs):
 
 
 def calculate_mean_between_different_parts(mean_values, scaled_positions):
+    """
+    Calculates the mean of values within intervals defined by the scaled positions.
+    This function divides the list of mean values into intervals based on the scaled positions,
+    and calculates the mean for each interval. The intervals are defined by consecutive pairs of
+    positions in the `scaled_positions` list. Each mean value is calculated by averaging the values
+    within the corresponding interval, and the results are returned in a list.
+
+    Parameters
+    ----------
+    mean_values : list of float
+        A list containing the values for which the mean will be calculated over intervals.
+
+    scaled_positions : list of float
+        A list of positions that define the intervals within the `mean_values` list.
+        These positions are used to split the data into intervals and calculate the mean
+        for each one.
+
+    Returns
+    -------
+    list of float
+        A list of the calculated mean values for each interval defined by `scaled_positions`.
+
+    """
     interval_means = []
     covered_indices = [False] * len(mean_values)
 
@@ -460,6 +729,40 @@ def calculate_mean_between_different_parts(mean_values, scaled_positions):
 
 
 def plot_power_vs_time(kwargs):
+    """
+    Plots a boxplot of power consumption over time with separate sections for different power types.
+
+    This function creates a boxplot for power consumption in different time bins, with each bin corresponding
+    to a certain power type. The plot separates different power types (e.g., 'sample_power', 'data_power',
+    'reference_power') by different colors and draws vertical lines to separate modes of measurement in the time axis.
+
+    Parameters
+    ----------
+    kwargs : dict
+        A dictionary containing the following key-value pairs:
+        - df : pandas.DataFrame
+            A DataFrame containing the data with time, power, and power_type columns.
+        - ax : matplotlib.axes.Axes
+            The Axes object to plot the boxplot on.
+        - bin_edges : list of float
+            The edges of the time bins for grouping the data.
+        - rounded_positions : list of float
+            The positions on the x-axis where vertical lines will be drawn to separate modes.
+        - modes_between_lines : list of str
+            The modes corresponding to the intervals between vertical lines.
+        - rate_x_limit : list of float
+            The x-axis limits for the rate plot.
+        - bin_size : int
+            The size of each time bin to group the data.
+    Returns
+    -------
+    tuple of (list of float, pandas.Categorical)
+        - scaled_positions : list of float
+            The scaled positions of vertical lines, adjusted for the length of the bins.
+        - bins : pandas.Categorical
+            The time bins for which the boxplots are drawn.
+
+    """
     df = kwargs["df"]
     ax = kwargs["ax"]
     bin_edges = kwargs["bin_edges"]
@@ -478,10 +781,6 @@ def plot_power_vs_time(kwargs):
         "data_power": "green",
         "reference_power": "red",
     }
-
-
-    print("bin_edges", bin_edges, len(bin_edges))
-    print("power_bins", bins, len(bins))
 
     for bin_idx, bin_edge in enumerate(bin_edges[:-1]):
         bin_data = df[(df["time"] >= bin_edges[bin_idx]) & (df["time"] < bin_edges[bin_idx + 1])]
@@ -510,7 +809,6 @@ def plot_power_vs_time(kwargs):
     scaled_positions = scale_line_positions(
         rate_line_positions, rate_x_limit[1], len(bins)
     )
-    print("scaled_positions", scaled_positions)
     interval_means = calculate_mean_between_different_parts(
         mean_values, scaled_positions
     )
@@ -540,6 +838,31 @@ def plot_power_vs_time(kwargs):
 
 
 def plot_throughput_vs_time(kwargs):
+    """
+    Plots a boxplot of throughput over time, with vertical lines indicating mode transitions.
+
+    This function creates a boxplot of throughput in different time bins, based on specified bin edges. Vertical
+    lines are drawn to separate different modes, and the function calculates the mean throughput for each bin.
+
+    Parameters
+    ----------
+    kwargs : dict
+        A dictionary containing the following key-value pairs:
+        - df : pandas.DataFrame
+            A DataFrame containing the data with time, throughput, and power_type columns.
+        - ax : matplotlib.axes.Axes
+            The Axes object to plot the boxplot on.
+        - bin_edges : list of float
+            The edges of the time bins for grouping the data.
+        - line_positions : list of float
+            The positions on the x-axis where vertical lines will be drawn to separate modes.
+        - modes_between_lines : list of str
+            The modes corresponding to the intervals between vertical lines.
+        - power_bins : list of float
+            The bins for power values.
+        - bin_size : int
+            The size of each time bin to group the data.
+    """
     df = kwargs["df"]
     ax = kwargs["ax"]
     bin_edges = kwargs["bin_edges"]
@@ -590,6 +913,30 @@ def plot_throughput_vs_time(kwargs):
 
 
 def plot_estimated_throughput(kwargs):
+    """
+    Plots a boxplot of estimated throughput over time, with vertical lines indicating mode transitions.
+
+    This function creates a boxplot of estimated throughput in different time bins, based on specified bin edges.
+    Vertical lines are drawn to separate different modes, and the function visualizes the estimated throughput
+    distribution over time intervals.
+
+    Parameters
+    ----------
+    kwargs : dict
+        A dictionary containing the following key-value pairs:
+        - df : pandas.DataFrame
+            A DataFrame containing the data with time, estimated throughput (est_tp), and power_type columns.
+        - ax : matplotlib.axes.Axes
+            The Axes object to plot the boxplot on.
+        - bin_edges : list of float
+            The edges of the time bins for grouping the data.
+        - line_positions : list of float
+            The positions on the x-axis where vertical lines will be drawn to separate modes.
+        - power_bins : list of float
+            The bins for power values.
+        - bin_size : int
+            The size of each time bin to group the data.
+    """
     df = kwargs["df"]
     ax = kwargs["ax"]
     bin_edges = kwargs["bin_edges"]
@@ -628,5 +975,7 @@ def plot_estimated_throughput(kwargs):
     ax.set_ylabel("Estimated Throughput")
     ax.set_title("Estimated Throughput vs Time (Box Plot)", fontsize=16)
     ax.set_xlim(0, len(power_bins))
+
+
 
 

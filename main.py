@@ -8,7 +8,18 @@ plt.rcParams.update({"font.size": 16})
 
 
 def plot_response_files(trace_response_data, measured_throughput_data):
-    # expected_throughput_data
+    """
+    Generate plots based on response and throughput data.
+
+    Parameters
+    ---------
+        trace_response_data : Data containing the trace response.
+        measured_throughput_data :  DataFrame containing measured throughput data.
+                                    Expected columns include 'time' and 'throughput'
+
+    Returns:
+        None : Saves the generated plots as a PNG file in the current working directory.
+    """
     df = pd.DataFrame(trace_response_data)
     pd.set_option("display.max_rows", None)
 
@@ -16,20 +27,19 @@ def plot_response_files(trace_response_data, measured_throughput_data):
     df_est_tp = df[df["trace_type"] == "est_tp"]
     min_time = df["time"].min()
     max_time = df["time"].max()
-    print('max', max_time)
-    print('min', min_time)
     bin_size = 2
     time_range = max_time - min_time
-    width_factor = 0.1
+    width_factor = 0.4
     if time_range <= 120:
         fig_width = 16
     else:
         fig_width = time_range * width_factor
 
+    print('fig_width', fig_width, time_range)
+
     base_height = 15
     num_subplots = 4
     total_height = base_height * num_subplots
-    print(f"Figure dimensions: width={fig_width}, height={total_height}")
 
     fig = plt.figure(figsize=(fig_width, total_height))
 
@@ -84,18 +94,20 @@ def plot_response_files(trace_response_data, measured_throughput_data):
             "modes_between_lines": modes_between_lines,
         }
     )
-    # plot_expected_tp_vs_max_tp({'df':expected_throughput_data, 'ax':ax4})
     fig.subplots_adjust(top=0.9, right=0.75)
     plt.tight_layout()
     plt.savefig(
-        "est_tp_plot.png",
+        "isolated_setup_revised.png",
         bbox_inches="tight",
         pad_inches=0.1,
-        dpi=500,
+        dpi=300,
     )
 
 
 if __name__ == "__main__":
+    """
+    Processes CSV files in a specified directory and generates plots based on the processed data.
+    """
     parser = argparse.ArgumentParser(description="Process CSV files in a directory.")
     parser.add_argument(
         "directory", type=str, help="The directory path to process files from."
